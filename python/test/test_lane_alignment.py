@@ -5,6 +5,7 @@ import numpy as np
 from src.control.lane_alignment import (
     analyze_center_lane_from_mask,
     build_lane_row_info,
+    compute_differential_speeds,
     compute_lane_row_correction,
     count_center_straddling_pairs,
     evaluate_lane_alignment,
@@ -103,6 +104,33 @@ def test_single_line_without_lane_pair_still_corrects():
     assert result["mode"] == "dist=5"
     assert result["correction"] == -5
     assert result["target_row"] == 5
+
+
+def test_differential_speed_correction_can_be_doubled():
+    left, right = compute_differential_speeds(
+        base_speed=25,
+        min_speed=22,
+        correction=5,
+        correction_gain=2,
+        right_wheel_compensation=1,
+        max_wheel_speed_delta=16,
+    )
+
+    assert (left, right) == (35, 26)
+
+
+def test_doubled_correction_uses_expanded_speed_delta_limit():
+    left, right = compute_differential_speeds(
+        base_speed=25,
+        min_speed=22,
+        correction=-10,
+        correction_gain=2,
+        right_wheel_compensation=1,
+        max_wheel_speed_delta=16,
+    )
+
+    assert (left, right) == (25, 40)
+    assert right - left == 15
 
 
 def test_center_side_points_ignore_far_third_line():

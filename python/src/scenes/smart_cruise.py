@@ -18,6 +18,7 @@ from src.control.boundary_detector import detect_horizontal_boundary
 from src.control.lane_alignment import (
     analyze_center_lane_from_mask,
     build_lane_row_info,
+    compute_differential_speeds,
     compute_lane_row_correction,
     evaluate_lane_alignment,
 )
@@ -54,6 +55,8 @@ class SmartCruise(BaseScene):
         self._boundary_escape_step_seconds = 0.10
         self._boundary_escape_settle_seconds = 0.20
         self._right_wheel_compensation = 1
+        self._lane_correction_gain = 2
+        self._max_wheel_speed_delta = 16
 
     def init_state(self):
         log.info(f'start init {self.__class__.__name__}')
@@ -257,23 +260,14 @@ class SmartCruise(BaseScene):
             left_spd = 0
             right_spd = 0
         else:
-            if correction >= 0:
-                left_spd = base_speed + correction
-                right_spd = base_speed
-            else:
-                left_spd = base_speed
-                right_spd = base_speed - correction
-
-        if not trigger_turn:
-            right_spd += self._right_wheel_compensation
-
-        left_spd = max(min_speed, min(40, left_spd))
-        right_spd = max(min_speed, min(40, right_spd))
-        if abs(left_spd - right_spd) > 8:
-            if left_spd > right_spd:
-                left_spd = min(right_spd + 8, 40)
-            else:
-                right_spd = min(left_spd + 8, 40)
+            left_spd, right_spd = compute_differential_speeds(
+                base_speed=base_speed,
+                min_speed=min_speed,
+                correction=correction,
+                correction_gain=self._lane_correction_gain,
+                right_wheel_compensation=self._right_wheel_compensation,
+                max_wheel_speed_delta=self._max_wheel_speed_delta,
+            )
 
         # ESP32 映射: 右轮负=正转, 左轮正=正转
         rr, fr, fl, rl = -right_spd, -right_spd, left_spd, left_spd

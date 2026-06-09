@@ -278,6 +278,32 @@ def compute_lane_row_correction(row_info, image_center):
     }
 
 
+def compute_differential_speeds(
+        base_speed, min_speed, correction, correction_gain=1,
+        right_wheel_compensation=0, max_wheel_speed_delta=8,
+        max_speed=40):
+    """Map a signed lane correction to left/right wheel speeds."""
+    speed_correction = correction * correction_gain
+    if speed_correction >= 0:
+        left_speed = base_speed + speed_correction
+        right_speed = base_speed
+    else:
+        left_speed = base_speed
+        right_speed = base_speed - speed_correction
+
+    right_speed += right_wheel_compensation
+    left_speed = max(min_speed, min(max_speed, left_speed))
+    right_speed = max(min_speed, min(max_speed, right_speed))
+
+    if abs(left_speed - right_speed) > max_wheel_speed_delta:
+        if left_speed > right_speed:
+            left_speed = min(right_speed + max_wheel_speed_delta, max_speed)
+        else:
+            right_speed = min(left_speed + max_wheel_speed_delta, max_speed)
+
+    return left_speed, right_speed
+
+
 def count_center_straddling_pairs(candidates, image_width, expected_width=None):
     """Count rows with a plausible left/right pair around the camera center."""
     expected_width = expected_width or image_width * 0.20
