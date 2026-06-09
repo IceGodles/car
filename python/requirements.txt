@@ -1,0 +1,5 @@
+pyserial
+filelock
+numpy<2
+opencv-python
+torch
