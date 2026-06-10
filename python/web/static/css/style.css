@@ -324,6 +324,9 @@ input:focus-visible {
 
 .camera-panel {
     align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .telemetry-stack {
@@ -403,7 +406,8 @@ input:focus-visible {
 .video-container {
     position: relative;
     overflow: hidden;
-    aspect-ratio: 4 / 3;
+    min-height: 0;
+    flex: 1;
     border: 1px solid #29323d;
     border-radius: 10px;
     background: #030507;
