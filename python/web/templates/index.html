@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#080b10">
+    <title>智能小车控制台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="ambient-grid" aria-hidden="true"></div>
+
+    <main class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">
+                    <span></span><span></span>
+                </div>
+                <div>
+                    <p class="eyebrow">AUTONOMOUS VEHICLE LAB</p>
+                    <h1>智能小车控制台</h1>
+                </div>
+            </div>
+
+            <div class="topbar-actions">
+                <div class="system-chip" id="previewBadge">
+                    <span class="chip-label">运行环境</span>
+                    <strong id="previewText">检测中</strong>
+                </div>
+                <div class="connection-status" id="connStatus">
+                    <span class="dot disconnected" id="connDot"></span>
+                    <span id="connText">连接中</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="mode-rail" aria-label="运行模式">
+            <div class="mode-copy">
+                <span class="section-symbol symbol-drive" aria-hidden="true"></span>
+                <div>
+                    <p class="eyebrow">DRIVE MODE</p>
+                    <h2 class="mode-title">选择车辆控制权</h2>
+                </div>
+            </div>
+            <div class="mode-buttons">
+                <button onclick="setMode('idle')" class="btn btn-mode active" id="btnIdle">
+                    <span class="mode-symbol mode-stop" aria-hidden="true"></span>
+                    <span><strong>停止</strong><small>IDLE</small></span>
+                </button>
+                <button onclick="setMode('manual')" class="btn btn-mode" id="btnManual">
+                    <span class="mode-symbol mode-manual" aria-hidden="true"></span>
+                    <span><strong>手动驾驶</strong><small>MANUAL</small></span>
+                </button>
+                <button onclick="setMode('smart')" class="btn btn-mode" id="btnSmart">
+                    <span class="mode-symbol mode-smart" aria-hidden="true"></span>
+                    <span><strong>智能巡航</strong><small>AUTONOMOUS</small></span>
+                </button>
+            </div>
+        </section>
+
+        <section class="overview-grid">
+            <article class="panel camera-panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="eyebrow">LIVE VISION</p>
+                        <h2>实时视觉</h2>
+                    </div>
+                    <div class="live-indicator"><span></span>CAM 01</div>
+                </div>
+
+                <div class="video-container">
+                    <img id="videoStream" src="/video_feed" alt="小车摄像头实时画面">
+                    <div class="viewfinder" aria-hidden="true">
+                        <i></i><i></i><i></i><i></i>
+                    </div>
+                    <div class="video-meta">
+                        <span>640 × 480</span>
+                        <span id="videoState">LIVE FEED</span>
+                    </div>
+                    <div class="video-overlay" id="videoOverlay">
+                        <span id="overlayText">等待连接</span>
+                    </div>
+                </div>
+
+                <div class="camera-controls">
+                    <button onclick="captureFrame()" class="btn btn-secondary">截取画面</button>
+                    <button onclick="toggleStream()" class="btn btn-secondary" id="toggleBtn">暂停视频</button>
+                    <button onclick="toggleRecord()" class="btn btn-record" id="recordBtn">
+                        <span class="record-dot"></span>开始录制
+                    </button>
+                    <span class="record-info" id="recordInfo"></span>
+                </div>
+            </article>
+
+            <aside class="telemetry-stack">
+                <article class="panel telemetry-panel">
+                    <div class="panel-heading compact">
+                        <div>
+                            <p class="eyebrow">TELEMETRY</p>
+                            <h2>实时遥测</h2>
+                        </div>
+                        <span class="refresh-rate">10 Hz</span>
+                    </div>
+
+                    <div class="hero-metric">
+                        <div>
+                            <span>当前状态</span>
+                            <strong id="stateValue">INIT</strong>
+                        </div>
+                        <div class="metric-orbit" aria-hidden="true"><span></span></div>
+                    </div>
+
+                    <div class="data-grid">
+                        <div class="data-item"><label>帧率</label><span class="data-value"><b id="fpsValue">0.0</b><small>FPS</small></span></div>
+                        <div class="data-item"><label>推理耗时</label><span class="data-value" id="inferTime">0 ms</span></div>
+                        <div class="data-item"><label>PID 误差</label><span class="data-value" id="errorValue">0.0</span></div>
+                        <div class="data-item"><label>PID 输出</label><span class="data-value" id="pidValue">0.000</span></div>
+                        <div class="data-item"><label>道路形态</label><span class="data-value" id="curveValue">直道</span></div>
+                        <div class="data-item"><label>速度系数</label><span class="data-value" id="speedFactor">1.00</span></div>
+                        <div class="data-item wide"><label>当前动作</label><span class="data-value" id="actionValue">Stop</span></div>
+                        <div class="data-item"><label>超声波距离</label><span class="data-value" id="distanceValue">--</span></div>
+                        <div class="data-item"><label>停止阈值</label><span class="data-value" id="thresholdValue">20.0 cm</span></div>
+                        <div class="data-item"><label>云台 S1 / S2</label><span class="data-value" id="servoValue">110° / 50°</span></div>
+                    </div>
+                </article>
+
+                <article class="panel manual-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">MANUAL DRIVE</p><h2>手动控制</h2></div>
+                        <span class="keyboard-hint">W A S D</span>
+                    </div>
+                    <div class="manual-layout">
+                        <div class="dpad" aria-label="方向控制">
+                            <button class="dpad-btn up" data-direction="forward" aria-label="前进">↑</button>
+                            <button class="dpad-btn left" data-direction="left" aria-label="左转">←</button>
+                            <button class="dpad-btn center" data-direction="stop" aria-label="停止">STOP</button>
+                            <button class="dpad-btn right" data-direction="right" aria-label="右转">→</button>
+                            <button class="dpad-btn down" data-direction="backward" aria-label="后退">↓</button>
+                        </div>
+                        <div class="speed-control">
+                            <div class="control-label">
+                                <span>驱动速度</span>
+                                <strong><span id="speedLabel">25</span><small> / 40</small></strong>
+                            </div>
+                            <input type="range" id="speedSlider" min="25" max="40" value="25" oninput="updateSpeed(this.value)">
+                            <div class="speed-presets">
+                                <button class="btn btn-sm" onclick="setSpeed(25)">25</button>
+                                <button class="btn btn-sm" onclick="setSpeed(30)">30</button>
+                                <button class="btn btn-sm" onclick="setSpeed(35)">35</button>
+                                <button class="btn btn-sm" onclick="setSpeed(40)">40</button>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+            </aside>
+        </section>
+
+        <section class="workspace">
+            <div class="section-heading">
+                <span class="section-symbol symbol-control" aria-hidden="true"></span>
+                <div><p class="eyebrow">VEHICLE CONTROL</p><h2>驾驶与执行器</h2></div>
+            </div>
+
+            <div class="control-grid">
+                <article class="panel wheel-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">WHEEL MATRIX</p><h2>四轮独立控制</h2></div>
+                        <span class="range-note">-80 / +80</span>
+                    </div>
+                    <div class="wheel-layout">
+                        <div class="car-diagram" aria-label="四轮速度示意">
+                            <div class="car-body">
+                                <div class="vehicle-nose"></div>
+                                <div class="wheel-pos wheel-fl"><span class="wheel-label">左前 · CH2</span><span class="wheel-speed zero" id="wFL">0</span></div>
+                                <div class="wheel-pos wheel-fr"><span class="wheel-label">右前 · CH1</span><span class="wheel-speed zero" id="wFR">0</span></div>
+                                <div class="car-center"><span>CAR</span><small>4WD</small></div>
+                                <div class="wheel-pos wheel-rl"><span class="wheel-label">左后 · CH3</span><span class="wheel-speed zero" id="wRL">0</span></div>
+                                <div class="wheel-pos wheel-rr"><span class="wheel-label">右后 · CH0</span><span class="wheel-speed zero" id="wRR">0</span></div>
+                            </div>
+                        </div>
+                        <div class="wheel-sliders">
+                            <div class="wheel-slider-row"><label class="wheel-name">右后 <small>CH0</small></label><input type="range" id="sliderRR" min="-80" max="80" value="0" oninput="updateWheel('rr', this.value)"><span class="wheel-val zero" id="valRR">0</span></div>
+                            <div class="wheel-slider-row"><label class="wheel-name">右前 <small>CH1</small></label><input type="range" id="sliderFR" min="-80" max="80" value="0" oninput="updateWheel('fr', this.value)"><span class="wheel-val zero" id="valFR">0</span></div>
+                            <div class="wheel-slider-row"><label class="wheel-name">左前 <small>CH2</small></label><input type="range" id="sliderFL" min="-80" max="80" value="0" oninput="updateWheel('fl', this.value)"><span class="wheel-val zero" id="valFL">0</span></div>
+                            <div class="wheel-slider-row"><label class="wheel-name">左后 <small>CH3</small></label><input type="range" id="sliderRL" min="-80" max="80" value="0" oninput="updateWheel('rl', this.value)"><span class="wheel-val zero" id="valRL">0</span></div>
+                            <div class="wheel-buttons">
+                                <button onclick="setAllWheels(0)" class="btn btn-danger-soft">全部停止</button>
+                                <button onclick="syncWheels()" class="btn btn-primary">同步到电机</button>
+                                <button onclick="resetWheels()" class="btn btn-secondary">重置</button>
+                            </div>
+                            <p class="wheel-info">正值前进，负值后退；绝对值小于 6 时进入电机死区。</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel servo-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">GIMBAL</p><h2>云台控制</h2></div>
+                    </div>
+                    <div class="param-sliders">
+                        <div class="param-row">
+                            <div class="control-label"><span>S1 俯仰 · PIN25</span><strong><span id="servo1Label">110</span>°</strong></div>
+                            <input type="range" id="servo1Slider" min="0" max="180" value="110" oninput="updateServo(1, this.value)">
+                            <div class="servo-presets">
+                                <button class="btn btn-sm" onclick="setServo(1, 50)">低 50°</button><button class="btn btn-sm" onclick="setServo(1, 90)">中 90°</button><button class="btn btn-sm" onclick="setServo(1, 110)">默认 110°</button><button class="btn btn-sm" onclick="setServo(1, 140)">高 140°</button>
+                            </div>
+                        </div>
+                        <div class="param-row">
+                            <div class="control-label"><span>S2 航向 · PIN26</span><strong><span id="servo2Label">50</span>°</strong></div>
+                            <input type="range" id="servo2Slider" min="0" max="180" value="50" oninput="updateServo(2, this.value)">
+                            <div class="servo-presets">
+                                <button class="btn btn-sm" onclick="setServo(2, 0)">左 0°</button><button class="btn btn-sm" onclick="setServo(2, 50)">默认 50°</button><button class="btn btn-sm" onclick="setServo(2, 90)">中 90°</button><button class="btn btn-sm" onclick="setServo(2, 180)">右 180°</button>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel safety-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">PROXIMITY SAFETY</p><h2>超声波安全距离</h2></div>
+                        <span class="range-note">5–50 CM</span>
+                    </div>
+                    <div class="safety-control">
+                        <div class="safety-readout" aria-hidden="true">
+                            <span class="safety-wave"></span>
+                            <strong><span id="thresholdLabel">20</span><small>cm</small></strong>
+                            <em>触发停车</em>
+                        </div>
+                        <div class="safety-settings">
+                            <div class="control-label">
+                                <span>障碍物停止阈值</span>
+                                <strong>小于等于该距离时停车</strong>
+                            </div>
+                            <input type="range" id="thresholdSlider" min="5" max="50" step="1" value="20"
+                                   oninput="previewStopThreshold(this.value)">
+                            <div class="threshold-actions">
+                                <div class="speed-presets">
+                                    <button class="btn btn-sm" onclick="setStopThreshold(10)">10 cm</button>
+                                    <button class="btn btn-sm" onclick="setStopThreshold(15)">15 cm</button>
+                                    <button class="btn btn-sm" onclick="setStopThreshold(20)">20 cm</button>
+                                    <button class="btn btn-sm" onclick="setStopThreshold(30)">30 cm</button>
+                                </div>
+                                <button class="btn btn-primary" onclick="applyStopThreshold()">应用到 ESP32</button>
+                            </div>
+                            <p class="wheel-info">阈值越小，车辆越靠近障碍物才会停止。修改后请低速测试制动距离。</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel debug-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">DEBUG MODE</p><h2>调试模式</h2></div>
+                    </div>
+                    <div class="debug-control">
+                        <div class="debug-toggle">
+                            <label class="switch-label">
+                                <input type="checkbox" id="debugToggle" onchange="toggleDebug(this.checked)">
+                                <span class="switch"></span>
+                                <span>开启调试模式</span>
+                            </label>
+                            <p class="wheel-info">开启后将保存调试图像到 capture/smart_debug 目录</p>
+                        </div>
+                        <div class="debug-actions">
+                            <button class="btn btn-danger-soft" onclick="cleanDebugImages()">
+                                🗑️ 清理调试图像
+                            </button>
+                            <span class="debug-status" id="debugStatus">已关闭</span>
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <section class="workspace">
+            <div class="section-heading">
+                <span class="section-symbol symbol-tuning" aria-hidden="true"></span>
+                <div><p class="eyebrow">ALGORITHM TUNING</p><h2>算法参数</h2></div>
+            </div>
+
+            <div class="tuning-grid">
+                <article class="panel pid-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">CONTROL LOOP</p><h2>PID 调参</h2></div>
+                        <button onclick="resetPID()" class="text-action">恢复默认</button>
+                    </div>
+                    <div class="param-sliders">
+                        <div class="param-row"><div class="control-label"><span>Kp · 比例</span><strong id="kpLabel">0.0012</strong></div><input type="range" id="kpSlider" min="0" max="50" value="12" oninput="updatePID()"></div>
+                        <div class="param-row"><div class="control-label"><span>Ki · 积分</span><strong id="kiLabel">0.0000</strong></div><input type="range" id="kiSlider" min="0" max="20" value="0" oninput="updatePID()"></div>
+                        <div class="param-row"><div class="control-label"><span>Kd · 微分</span><strong id="kdLabel">0.0005</strong></div><input type="range" id="kdSlider" min="0" max="30" value="5" oninput="updatePID()"></div>
+                        <div class="param-row"><div class="control-label"><span>平滑系数</span><strong id="alphaLabel">0.30</strong></div><input type="range" id="alphaSlider" min="0" max="100" value="30" oninput="updatePID()"></div>
+                        <div class="param-row"><div class="control-label"><span>中心死区</span><strong><span id="deadbandLabel">20</span> px</strong></div><input type="range" id="deadbandSlider" min="0" max="80" value="20" oninput="updatePID()"></div>
+                    </div>
+                </article>
+
+                <article class="panel hsv-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">VISION MASK</p><h2>HSV 阈值</h2></div>
+                        <label class="switch-label"><input type="checkbox" id="adaptiveCheck" checked onchange="updateHSV()"><span class="switch"></span><span>自适应</span></label>
+                    </div>
+                    <div class="param-sliders">
+                        <div class="param-row hue-row"><div class="control-label"><span>H 最小值</span><strong id="hminLabel">12</strong></div><input type="range" id="hminSlider" min="0" max="179" value="12" oninput="updateHSV()"></div>
+                        <div class="param-row hue-row"><div class="control-label"><span>H 最大值</span><strong id="hmaxLabel">45</strong></div><input type="range" id="hmaxSlider" min="0" max="179" value="45" oninput="updateHSV()"></div>
+                        <div class="param-row saturation-row"><div class="control-label"><span>S 最小值</span><strong id="sminLabel">70</strong></div><input type="range" id="sminSlider" min="0" max="255" value="70" oninput="updateHSV()"></div>
+                        <div class="param-row value-row"><div class="control-label"><span>V 最小值</span><strong id="vminLabel">80</strong></div><input type="range" id="vminSlider" min="0" max="255" value="80" oninput="updateHSV()"></div>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <section class="workspace behavior-workspace">
+            <div class="section-heading">
+                <span class="section-symbol symbol-behavior" aria-hidden="true"></span>
+                <div>
+                    <p class="eyebrow">BEHAVIOR SAFETY VISION</p>
+                    <h2>异常行为识别</h2>
+                </div>
+            </div>
+
+            <div class="behavior-grid">
+                <article class="panel behavior-monitor-panel">
+                    <div class="panel-heading compact">
+                        <div>
+                            <p class="eyebrow">TENSORRT LIVE ANALYSIS</p>
+                            <h2>实时检测画面</h2>
+                        </div>
+                        <span class="behavior-status" id="behaviorStatus">
+                            <i></i><span id="behaviorStatusText">服务检查中</span>
+                        </span>
+                    </div>
+
+                    <div class="behavior-view">
+                        <img id="behaviorStream" alt="异常行为实时检测画面" hidden>
+                        <div class="behavior-empty" id="behaviorEmpty">
+                            <span class="behavior-radar" aria-hidden="true"></span>
+                            <strong>等待视频源</strong>
+                            <p>导入本地视频，或连接电脑摄像头开始实时检测。</p>
+                        </div>
+                        <div class="behavior-view-meta">
+                            <span id="behaviorSource">NO SOURCE</span>
+                            <span><b id="behaviorFps">0.0</b> FPS</span>
+                        </div>
+                    </div>
+
+                    <div class="behavior-progress" aria-label="视频检测进度">
+                        <span id="behaviorProgressBar"></span>
+                    </div>
+
+                    <div class="behavior-controls">
+                        <input type="file" id="behaviorVideoInput"
+                               accept="video/mp4,video/x-msvideo,video/quicktime,video/webm,.mkv"
+                               hidden>
+                        <button type="button" class="btn btn-primary" id="behaviorUploadBtn">
+                            导入视频并检测
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="behaviorLiveBtn">
+                            电脑摄像头实时检测
+                        </button>
+                        <button type="button" class="btn btn-danger-soft" id="behaviorStopBtn">
+                            停止检测
+                        </button>
+                        <span class="behavior-frame-count">
+                            FRAME <b id="behaviorFrame">0</b>
+                        </span>
+                    </div>
+                </article>
+
+                <aside class="behavior-alert-column">
+                    <article class="panel latest-alert-panel" id="latestAlertPanel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <p class="eyebrow">LATEST EVIDENCE</p>
+                                <h2>最新报警帧</h2>
+                            </div>
+                            <span class="alert-count"><b id="behaviorAlarmCount">0</b> ALERTS</span>
+                        </div>
+                        <div class="latest-alert-empty" id="latestAlertEmpty">
+                            暂无异常报警
+                        </div>
+                        <div class="latest-alert-content" id="latestAlertContent" hidden>
+                            <img id="latestAlertImage" alt="最新异常行为报警帧">
+                            <div class="latest-alert-meta">
+                                <strong id="latestAlertReason">--</strong>
+                                <span id="latestAlertTime">--</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="panel alert-timeline-panel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <p class="eyebrow">ALARM TIMELINE</p>
+                                <h2>报警记录</h2>
+                            </div>
+                        </div>
+                        <div class="alert-timeline" id="behaviorAlarmList">
+                            <div class="alert-timeline-empty">等待检测事件...</div>
+                        </div>
+                        <div class="alert-pagination" id="alarmPagination" hidden>
+                            <button type="button" class="btn btn-sm alarm-page-btn" id="alarmPrevBtn" disabled>‹ 上一页</button>
+                            <span class="alarm-page-info" id="alarmPageInfo">1 / 1</span>
+                            <button type="button" class="btn btn-sm alarm-page-btn" id="alarmNextBtn" disabled>下一页 ›</button>
+                        </div>
+                    </article>
+                </aside>
+            </div>
+        </section>
+
+        <section class="workspace diagnostics">
+            <div class="section-heading">
+                <span class="section-symbol symbol-diagnostics" aria-hidden="true"></span>
+                <div><p class="eyebrow">DIAGNOSTICS</p><h2>检测与运行日志</h2></div>
+            </div>
+
+            <div class="diagnostics-grid">
+                <article class="panel detect-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">YOLO INFERENCE</p><h2>单帧目标检测</h2></div>
+                        <button onclick="runDetection()" class="btn btn-primary" id="detectBtn">运行检测</button>
+                    </div>
+                    <div class="detect-result" id="detectResult">
+                        <span class="muted">从当前视频帧运行 YOLO 检测。</span>
+                    </div>
+                    <div id="detectImage" class="detect-image" hidden>
+                        <img id="detectImg" alt="YOLO 检测结果">
+                    </div>
+                </article>
+
+                <article class="panel log-panel">
+                    <div class="panel-heading compact">
+                        <div><p class="eyebrow">RUNTIME STREAM</p><h2>运行日志</h2></div>
+                        <div class="log-heading-actions">
+                            <button type="button" class="log-follow-btn" id="logFollowBtn" hidden>
+                                &#22238;&#21040;&#24213;&#37096;
+                            </button>
+                            <span class="log-status" id="logStatus"><i></i><span id="logStatusText">TAILING</span></span>
+                        </div>
+                    </div>
+                    <div id="logBox" class="log-box" aria-live="polite">
+                        <div class="log-empty">等待系统日志...</div>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <span>SMART CAR CONTROL SYSTEM</span>
+            <span>WEB CONSOLE · V2</span>
+        </footer>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
