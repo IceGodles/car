@@ -927,7 +927,21 @@ class SmartCruise(BaseScene):
                             lane_filter["stop_after"],
                         )
 
-                # 3. 状态机更新（管理 PAUSE/TURN/STOP 转移）
+                # 3. 过滤远处标志牌（y在第5根扫描线以上的跳过）
+                if sign_result and sign_result.get("signs"):
+                    line5_y = int(h_f * self.follower.scan_ratios[4])
+                    filtered_signs = [
+                        s for s in sign_result["signs"]
+                        if s.get("y", 0) >= line5_y
+                    ]
+                    if len(filtered_signs) != len(sign_result["signs"]):
+                        log.info(
+                            "Sign filter: %d -> %d (line5_y=%d)",
+                            len(sign_result["signs"]), len(filtered_signs), line5_y,
+                        )
+                    sign_result["signs"] = filtered_signs
+
+                # 4. 状态机更新（管理 PAUSE/TURN/STOP 转移）
                 state_output = self.sm.update(lane_result, sign_result)
 
                 # 4. 边界检测 (对齐 notebook cell4 顶部)
