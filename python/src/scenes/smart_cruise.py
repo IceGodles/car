@@ -13,7 +13,8 @@ import numpy as np
 
 from src.actions import (Advance, SetServo, SpinAntiClockwise,
                          SpinClockwise, Stop, TurnLeft, TurnRight)
-from src.actions.complex_actions import TurnLeftInPlace, TurnRightInPlace, TurnAround
+from src.actions.complex_actions import TurnLeftInPlace, TurnRightInPlace, TurnAround, AutoParking
+from src.utils.tcp_client import notify_arm_parking_complete
 from src.control.boundary_detector import detect_horizontal_boundary
 from src.control.lane_alignment import (
     analyze_center_lane_from_mask,
@@ -47,6 +48,7 @@ class SmartCruise(BaseScene):
         self._alignment_settle_seconds = 0.05
         self._boundary_escape = False
         self._boundary_warning_mode = False
+        self._boundary_warning_start_time = 0
         self._boundary_escape_direction = "right"
         self._boundary_escape_steps = 0
         self._boundary_escape_streak = 0
@@ -57,6 +59,13 @@ class SmartCruise(BaseScene):
         self._right_wheel_compensation = 1
         self._lane_correction_gain = 2
         self._max_wheel_speed_delta = 16
+        self._parking_executed = False
+        self._boundary_stop_time = 0
+        self._pending_boundary_sign = None
+        self._post_stop_cruise = False
+        self._post_stop_start_time = 0
+        self._post_stop_sign = None
+        self._skip_next_warning = False
 
     def init_state(self):
         log.info(f'start init {self.__class__.__name__}')
@@ -89,6 +98,7 @@ class SmartCruise(BaseScene):
                 model = YoloV5(yolo_path)
                 self.det = SignDetector(model, {
                     "detect_interval": 3, "roi_keep_ratio": 0.6, "conf_threshold": 0.85,
+                    "stop_conf_threshold": 0.75, "stop_detect_interval": 3,
                 })
                 log.info(f'  YOLO OK ({os.path.basename(yolo_path)})')
                 break
@@ -96,6 +106,14 @@ class SmartCruise(BaseScene):
                 log.warning(f'  YOLO fail: {e}')
 
         self.ctrl.execute(SetServo(servo=CAMERA_SERVO_ANGLE))
+
+        # 设置超声波避障阈值为1cm
+        try:
+            ret, _ = self.ctrl.set_stop_threshold(1.0)
+            log.info(f'  超声波阈值设置为1cm: {ret}')
+        except Exception as e:
+            log.warning(f'  超声波阈值设置失败: {e}')
+
         log.info(f'{self.__class__.__name__} init succ.')
         return False
 
@@ -243,18 +261,18 @@ class SmartCruise(BaseScene):
 
         else:
             # 无候选 → 低速前进 (保留原 recovery 行为)
-            base_spd = 12
+            base_spd = 38
             rr, fr, fl, rl = -base_spd, -base_spd, base_spd, base_spd
             action = "Recover"
             return rr, fr, fl, rl, action
 
         # ---------- Step 5: 速度+差速 (对齐 notebook cell5) ----------
         if approach_mode:
-            base_speed = 18
-            min_speed = 16
+            base_speed = 40
+            min_speed = 38
         else:
-            base_speed = 23 if (trigger_turn or curve_slow) else 25
-            min_speed = 22
+            base_speed = 40 if (trigger_turn or curve_slow) else 45
+            min_speed = 38
 
         if trigger_turn:
             left_spd = 0
@@ -267,6 +285,7 @@ class SmartCruise(BaseScene):
                 correction_gain=self._lane_correction_gain,
                 right_wheel_compensation=self._right_wheel_compensation,
                 max_wheel_speed_delta=self._max_wheel_speed_delta,
+                max_speed=60,
             )
 
         # ESP32 映射: 右轮负=正转, 左轮正=正转
@@ -354,9 +373,9 @@ class SmartCruise(BaseScene):
             spin_action = SpinAntiClockwise
         else:
             spin_action = SpinClockwise
-        self.ctrl.execute(spin_action(speed=42))
+        self.ctrl.execute(spin_action(speed=70))
         time.sleep(0.05)
-        self.ctrl.execute(spin_action(speed=34))
+        self.ctrl.execute(spin_action(speed=65))
         time.sleep(self._alignment_step_seconds)
         self.ctrl.execute(Stop())
         time.sleep(self._alignment_settle_seconds)
@@ -489,7 +508,7 @@ class SmartCruise(BaseScene):
 
     def _save_boundary_warning_debug(self, frame, debug_dir, frame_count,
                                      boundary_result, yellow_ratio,
-                                     stopped=False):
+                                     stopped=False, wheel_speeds=None):
         if frame is None or not debug_dir:
             return
         img = frame.copy()
@@ -504,10 +523,16 @@ class SmartCruise(BaseScene):
         )
         cv2.putText(img, label, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
+        if wheel_speeds is not None:
+            rr, fr, fl, rl = wheel_speeds
+            spd_label = f"Wheels RR={rr} FR={fr} FL={fl} RL={rl}"
+            cv2.putText(img, spd_label, (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
         y = int(boundary_result.get("y", 0))
         cv2.line(img, (0, y), (img.shape[1], y), (0, 0, 255), 2)
+        suffix = "BOUNDARY_STOP" if stopped else "BOUNDARY_WARNING"
         cv2.imwrite(
-            os.path.join(debug_dir, f"f{frame_count:05d}_BOUNDARY_WARNING.jpg"),
+            os.path.join(debug_dir, f"f{frame_count:05d}_{suffix}.jpg"),
             img,
         )
 
@@ -523,7 +548,8 @@ class SmartCruise(BaseScene):
             if len(bbox) >= 6 and bbox[4] in target_labels
         ]
         accepted = sign_result.get("signs", []) + sign_result.get("stop_signs", [])
-        if not bboxes and not accepted:
+        filtered_bboxes = sign_result.get("filtered_bboxes", [])
+        if not bboxes and not accepted and not filtered_bboxes:
             return
 
         out_dir = os.path.join(debug_dir, "yolo")
@@ -543,6 +569,7 @@ class SmartCruise(BaseScene):
             if decision.get("bbox")
         }
 
+        # 绘制已接受的目标（绿色框）
         for x1, y1, x2, y2, cate, score in bboxes:
             box = (int(x1), int(y1), int(x2), int(y2))
             used = box in accepted_boxes
@@ -561,6 +588,28 @@ class SmartCruise(BaseScene):
             cv2.putText(img, label, (box[0], text_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
+        # 绘制被过滤的目标（红色框 + 过滤原因）
+        for filtered in filtered_bboxes:
+            bbox = filtered.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            box = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+            reason = filtered.get("reason", "未知原因")
+            score = filtered.get("score", 0)
+            cate = filtered.get("type", "unknown")
+
+            # 红色框表示被过滤
+            cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 2)
+            # 标签：类型 + 置信度 + 过滤原因
+            label = "{} {:.2f} FILTERED".format(cate, score)
+            text_y = max(20, box[1] - 8)
+            cv2.putText(img, label, (box[0], text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+            # 在框下方显示过滤原因
+            reason_y = min(box[3] + 20, img.shape[0] - 10)
+            cv2.putText(img, f"Reason: {reason}", (box[0], reason_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
+
         origin = lane_filter.get(
             "origin",
             (img.shape[1] // 2, img.shape[0] - 1),
@@ -576,9 +625,10 @@ class SmartCruise(BaseScene):
             if crossing:
                 cv2.circle(img, tuple(crossing), 7, (0, 165, 255), -1)
 
-        summary = "YOLO signs={} stop={}".format(
+        summary = "YOLO signs={} stop={} filtered={}".format(
             len(sign_result.get("signs", [])),
             len(sign_result.get("stop_signs", [])),
+            len(filtered_bboxes),
         )
         if lane_filter.get("enabled"):
             summary += " lane signs {}->{} stop {}->{}".format(
@@ -695,8 +745,16 @@ class SmartCruise(BaseScene):
         self._turn_executed = False
         last_cmd_time = time.time()
         CMD_TIMEOUT = 0.35
-        debug_dir = os.path.join(os.getcwd(), "capture", "smart_debug")
-        os.makedirs(debug_dir, exist_ok=True)
+
+        # 从环境变量读取debug模式
+        debug_enabled = os.environ.get("SMART_CAR_DEBUG", "0") == "1"
+        if debug_enabled:
+            debug_dir = os.path.join(os.getcwd(), "capture", "smart_debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            log.info("Debug模式已开启，将保存调试图像")
+        else:
+            debug_dir = None
+            log.info("Debug模式已关闭，不保存调试图像")
 
         # 等待摄像头数据正常
         log.info("等待摄像头数据...")
@@ -732,10 +790,48 @@ class SmartCruise(BaseScene):
                     "TURN", "PAUSE", "STOP")
                 if not warning_allowed:
                     self._boundary_warning_mode = False
+                    self._boundary_warning_start_time = 0
                 if boundary_result["warning"] and warning_allowed:
+                    if not self._boundary_warning_mode:
+                        self._boundary_warning_start_time = time.time()
                     self._boundary_warning_mode = True
 
+                # 停止后延迟0.1s再触发转弯
+                if self._boundary_stop_time > 0:
+                    if time.time() - self._boundary_stop_time >= 0.1:
+                        pending_sign = self._pending_boundary_sign
+                        self._boundary_stop_time = 0
+                        if pending_sign in ("left", "right", "turnaround"):
+                            self.sm.on_boundary_detected()
+                            log.info("Delayed turn trigger: sign=%s", pending_sign)
+                        else:
+                            self._start_boundary_escape({
+                                "coverage": 0.3, "y_ratio": 0.3, "hit": True,
+                            })
+                            log.info("Delayed boundary escape (no sign)")
+                    else:
+                        # 0.1s内继续发送当前速度
+                        lane_result = self.follower.infer(img_bgr)
+                        state_output = self.sm._build_output()
+                        rr, fr, fl, rl, _ = self._compute_wheels(
+                            state_output, lane_result, h_f, w_f)
+                        self.ctrl.send_raw_wheels(rr, fr, fl, rl)
+                        frame_count += 1
+                        last_cmd_time = time.time()
+                        continue
+
                 if self._boundary_warning_mode and warning_allowed:
+                    warning_elapsed = time.time() - self._boundary_warning_start_time
+                    if warning_elapsed < 0.1:
+                        # 保持原速继续行驶0.1s
+                        lane_result = self.follower.infer(img_bgr)
+                        state_output = self.sm._build_output()
+                        rr, fr, fl, rl, _ = self._compute_wheels(
+                            state_output, lane_result, h_f, w_f)
+                        self.ctrl.send_raw_wheels(rr, fr, fl, rl)
+                        frame_count += 1
+                        last_cmd_time = time.time()
+                        continue
                     yellow_ratio = self._bottom_yellow_ratio(
                         img_bgr, roi_ratio=0.30)
                     boundary_stop = (
@@ -749,31 +845,16 @@ class SmartCruise(BaseScene):
                             img_bgr, debug_dir, frame_count,
                             boundary_result, yellow_ratio,
                             stopped=True,
+                            wheel_speeds=(0, 0, 0, 0),
                         )
-                        pending_sign = state_output.get("pending_sign")
                         self._boundary_warning_mode = False
-                        if pending_sign in ("left", "right", "turnaround"):
-                            self.sm.on_boundary_detected()
-                            log.info(
-                                "Boundary warning stop: bottom30=%.1f%% sign=%s",
-                                yellow_ratio * 100,
-                                pending_sign,
-                            )
-                        else:
-                            self._start_boundary_escape({
-                                "coverage": max(
-                                    yellow_ratio,
-                                    boundary_result["coverage"],
-                                ),
-                                "y_ratio": boundary_result["y_ratio"],
-                                "hit": True,
-                            })
-                            log.info(
-                                "Boundary warning escape: bottom30=%.1f%%",
-                                yellow_ratio * 100,
-                            )
+                        self._boundary_warning_start_time = 0
+                        # 停止后记录时间，延迟0.1s再触发转弯
+                        self._boundary_stop_time = time.time()
+                        self._pending_boundary_sign = state_output.get("pending_sign")
+                        log.info("Boundary stop: waiting 0.1s before turn")
                     else:
-                        slow_speed = 18
+                        slow_speed = 10
                         self.ctrl.send_raw_wheels(
                             -slow_speed, -slow_speed,
                             slow_speed, slow_speed,
@@ -782,6 +863,7 @@ class SmartCruise(BaseScene):
                             img_bgr, debug_dir, frame_count,
                             boundary_result, yellow_ratio,
                             stopped=False,
+                            wheel_speeds=(-slow_speed, -slow_speed, slow_speed, slow_speed),
                         )
                         log.info(
                             "#%d BOUNDARY_WARNING bottom30=%.1f%% cov=%.1f%% y=%.1f%%",
@@ -814,6 +896,22 @@ class SmartCruise(BaseScene):
                     if sign_result and sign_result.get("signs"):
                         for s in sign_result["signs"]:
                             log.info(f'YOLO: {s["type"]} score={s["score"]:.3f} pos=({s["x"]:.0f},{s["y"]:.0f})')
+
+                    # 检测到stop标志，触发自动泊车
+                    if (sign_result and sign_result.get("stop") and
+                            sign_result.get("stop_signs") and
+                            not self._parking_executed):
+                        log.info("检测到stop标志，触发自动泊车")
+                        self._parking_executed = True
+                        self.ctrl.execute(AutoParking())
+                        log.info("自动泊车完成，通知机械臂")
+                        # 通知机械臂泊车完成
+                        try:
+                            notify_arm_parking_complete("192.168.8.100", 9999)
+                            log.info("已通知机械臂: 车已到达，可以开始分拣作业")
+                        except Exception as e:
+                            log.error(f"通知机械臂失败: {e}")
+                        break
                     if sign_result and sign_result.get("lane_filter", {}).get("enabled"):
                         lane_filter = sign_result["lane_filter"]
                         crossed = sum(
@@ -919,7 +1017,10 @@ class SmartCruise(BaseScene):
                     continue
 
                 if self._turn_executed:
-                    self._start_post_turn_alignment(self._alignment_turn)
+                    if self._alignment_turn == "turnaround":
+                        log.info("TurnAround complete, resume lane following")
+                    else:
+                        self._start_post_turn_alignment(self._alignment_turn)
                 self._turn_executed = False
 
                 if self._post_turn_align:
@@ -950,7 +1051,7 @@ class SmartCruise(BaseScene):
                 last_cmd_time = now
 
                 # 8. 保存调试帧
-                if state_name != "TURN":
+                if state_name != "TURN" and debug_dir:
                     debug_img = img_bgr.copy()
                     cv2.putText(debug_img,
                                 f"#{frame_count} {state_name} {action} L={left_display} R={right_display} d={left_display-right_display:+d}",

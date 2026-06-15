@@ -24,7 +24,8 @@ class DrivingStateMachine:
         self.state_enter_time = time.time()
         self.approach_duration = config.get("approach_duration", 1.0)
         self.pause_duration = config.get("pause_duration", 0.3)
-        self.turn_duration = config.get("turn_duration", 1.5)
+        # TurnAround 动作需要约2.4秒，需要足够的时间
+        self.turn_duration = config.get("turn_duration", 1.0)
         self.approach_target_x = None
         self.approach_target_y = None
         self.pending_sign = None
@@ -50,7 +51,18 @@ class DrivingStateMachine:
             self.pending_sign = sign_type
             self.approach_target_x = target_x
             self.approach_target_y = target_y
-            self._enter_state(DrivingState.APPROACH, reason=f"detect:{sign_type}")
+            if sign_type == "turnaround":
+                # 掉头标志本身就是动作触发点，不再等待黄线边界。
+                self._boundary_hit = False
+                self._enter_state(
+                    DrivingState.TURN,
+                    reason="detect:turnaround_direct",
+                )
+            else:
+                self._enter_state(
+                    DrivingState.APPROACH,
+                    reason=f"detect:{sign_type}",
+                )
 
     def on_boundary_detected(self):
         """检测到黄线边界 → 立即停止approach"""
