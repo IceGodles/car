@@ -62,6 +62,7 @@ class SmartCruise(BaseScene):
         self._parking_executed = False
         self._boundary_stop_time = 0
         self._pending_boundary_sign = None
+        self._boundary_hold_speeds = (0, 0, 0, 0)
         self._post_stop_cruise = False
         self._post_stop_start_time = 0
         self._post_stop_sign = None
@@ -786,8 +787,10 @@ class SmartCruise(BaseScene):
 
                 boundary_result = detect_horizontal_boundary(img_bgr)
                 state_snapshot = self.sm._build_output()
-                warning_allowed = state_snapshot.get("state") not in (
-                    "TURN", "PAUSE", "STOP")
+                warning_allowed = (
+                    state_snapshot.get("state") not in ("TURN", "PAUSE", "STOP")
+                    and self._boundary_stop_time == 0  # STOP后延迟期间禁止重新进入WARNING
+                )
                 if not warning_allowed:
                     self._boundary_warning_mode = False
                     self._boundary_warning_start_time = 0
@@ -796,9 +799,18 @@ class SmartCruise(BaseScene):
                         self._boundary_warning_start_time = time.time()
                     self._boundary_warning_mode = True
 
-                # 停止后延迟0.1s再触发转弯
+                # 到达停止线后保持速度0.1s，再停车触发转弯
                 if self._boundary_stop_time > 0:
                     if time.time() - self._boundary_stop_time >= 0.1:
+                        # 0.1s到，停车并触发转弯
+                        self._stop_for_boundary()
+                        self._save_boundary_warning_debug(
+                            img_bgr, debug_dir, frame_count,
+                            boundary_result,
+                            self._bottom_yellow_ratio(img_bgr, 0.30),
+                            stopped=True,
+                            wheel_speeds=(0, 0, 0, 0),
+                        )
                         pending_sign = self._pending_boundary_sign
                         self._boundary_stop_time = 0
                         if pending_sign in ("left", "right", "turnaround"):
@@ -810,28 +822,13 @@ class SmartCruise(BaseScene):
                             })
                             log.info("Delayed boundary escape (no sign)")
                     else:
-                        # 0.1s内继续发送当前速度
-                        lane_result = self.follower.infer(img_bgr)
-                        state_output = self.sm._build_output()
-                        rr, fr, fl, rl, _ = self._compute_wheels(
-                            state_output, lane_result, h_f, w_f)
-                        self.ctrl.send_raw_wheels(rr, fr, fl, rl)
+                        # 0.1s内保持停止前的速度继续运动
+                        self.ctrl.send_raw_wheels(*self._boundary_hold_speeds)
                         frame_count += 1
                         last_cmd_time = time.time()
                         continue
 
                 if self._boundary_warning_mode and warning_allowed:
-                    warning_elapsed = time.time() - self._boundary_warning_start_time
-                    if warning_elapsed < 0.1:
-                        # 保持原速继续行驶0.1s
-                        lane_result = self.follower.infer(img_bgr)
-                        state_output = self.sm._build_output()
-                        rr, fr, fl, rl, _ = self._compute_wheels(
-                            state_output, lane_result, h_f, w_f)
-                        self.ctrl.send_raw_wheels(rr, fr, fl, rl)
-                        frame_count += 1
-                        last_cmd_time = time.time()
-                        continue
                     yellow_ratio = self._bottom_yellow_ratio(
                         img_bgr, roi_ratio=0.30)
                     boundary_stop = (
@@ -839,35 +836,37 @@ class SmartCruise(BaseScene):
                         or boundary_result["hit"]
                     )
                     state_output = state_snapshot
+                    lane_result = self.follower.infer(img_bgr)
+                    rr, fr, fl, rl, action = self._compute_wheels(
+                        state_output, lane_result, h_f, w_f)
+                    warning_speeds = (rr, fr, fl, rl)
                     if boundary_stop:
-                        self._stop_for_boundary()
-                        self._save_boundary_warning_debug(
-                            img_bgr, debug_dir, frame_count,
-                            boundary_result, yellow_ratio,
-                            stopped=True,
-                            wheel_speeds=(0, 0, 0, 0),
-                        )
-                        self._boundary_warning_mode = False
-                        self._boundary_warning_start_time = 0
-                        # 停止后记录时间，延迟0.1s再触发转弯
-                        self._boundary_stop_time = time.time()
-                        self._pending_boundary_sign = state_output.get("pending_sign")
-                        log.info("Boundary stop: waiting 0.1s before turn")
-                    else:
-                        slow_speed = 10
-                        self.ctrl.send_raw_wheels(
-                            -slow_speed, -slow_speed,
-                            slow_speed, slow_speed,
-                        )
+                        # 不停车，保持当前APPROACH/巡线修正速度0.1s
+                        self._boundary_hold_speeds = warning_speeds
                         self._save_boundary_warning_debug(
                             img_bgr, debug_dir, frame_count,
                             boundary_result, yellow_ratio,
                             stopped=False,
-                            wheel_speeds=(-slow_speed, -slow_speed, slow_speed, slow_speed),
+                            wheel_speeds=self._boundary_hold_speeds,
+                        )
+                        self._boundary_warning_mode = False
+                        self._boundary_warning_start_time = 0
+                        # 记录时间，0.1s内保持速度，到期后停车触发转弯
+                        self._boundary_stop_time = time.time()
+                        self._pending_boundary_sign = state_output.get("pending_sign")
+                        log.info("Boundary reached: hold speed 0.1s before stop+turn")
+                    else:
+                        self.ctrl.send_raw_wheels(*warning_speeds)
+                        self._save_boundary_warning_debug(
+                            img_bgr, debug_dir, frame_count,
+                            boundary_result, yellow_ratio,
+                            stopped=False,
+                            wheel_speeds=warning_speeds,
                         )
                         log.info(
-                            "#%d BOUNDARY_WARNING bottom30=%.1f%% cov=%.1f%% y=%.1f%%",
+                            "#%d BOUNDARY_WARNING %s bottom30=%.1f%% cov=%.1f%% y=%.1f%%",
                             frame_count,
+                            action,
                             yellow_ratio * 100,
                             boundary_result["coverage"] * 100,
                             boundary_result["y_ratio"] * 100,
