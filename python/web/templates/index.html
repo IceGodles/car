@@ -140,14 +140,14 @@
                         <div class="speed-control">
                             <div class="control-label">
                                 <span>驱动速度</span>
-                                <strong><span id="speedLabel">25</span><small> / 40</small></strong>
+                                <strong><span id="speedLabel">25</span><small> / 80</small></strong>
                             </div>
-                            <input type="range" id="speedSlider" min="25" max="40" value="25" oninput="updateSpeed(this.value)">
+                            <input type="range" id="speedSlider" min="25" max="80" value="25" oninput="updateSpeed(this.value)">
                             <div class="speed-presets">
                                 <button class="btn btn-sm" onclick="setSpeed(25)">25</button>
-                                <button class="btn btn-sm" onclick="setSpeed(30)">30</button>
-                                <button class="btn btn-sm" onclick="setSpeed(35)">35</button>
                                 <button class="btn btn-sm" onclick="setSpeed(40)">40</button>
+                                <button class="btn btn-sm" onclick="setSpeed(60)">60</button>
+                                <button class="btn btn-sm" onclick="setSpeed(80)">80</button>
                             </div>
                         </div>
                     </div>
@@ -451,6 +451,6 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
-    <script src="{{ url_for('static', filename='js/app.js') }}?v=manual-diff-20260616"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=manual-diff-20260616-2"></script>
 </body>
 </html>

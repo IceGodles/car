@@ -63,10 +63,36 @@ _camera_thread = None
 _camera_stop_event = threading.Event()
 _camera_lifecycle_lock = threading.Lock()
 
+def _find_camera_device():
+    """自动检测可用的摄像头设备"""
+    import glob
+    video_devices = sorted(glob.glob('/dev/video*'))
+    for device_path in video_devices:
+        try:
+            device_id = int(device_path.replace('/dev/video', ''))
+            cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    log.info(f"Found working camera at {device_path} (id={device_id})")
+                    return device_id
+            cap.release()
+        except Exception:
+            continue
+    return None
+
 def _camera_reader_thread():
     """唯一摄像头读取线程，所有消费者从 _latest_frame 取帧"""
     global _latest_frame, _camera_started, _camera_cap
-    cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+
+    # 自动检测摄像头设备
+    device_id = _find_camera_device()
+    if device_id is None:
+        log.error("No working camera device found")
+        return
+
+    cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
     with _camera_lifecycle_lock:
         _camera_cap = cap
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("M", "J", "P", "G"))
@@ -74,12 +100,12 @@ def _camera_reader_thread():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
     if not cap.isOpened():
-        log.error("Camera cannot open")
+        log.error(f"Camera device {device_id} cannot open")
         with _camera_lifecycle_lock:
             _camera_cap = None
         return
     _camera_started = True
-    log.info("Camera reader thread started")
+    log.info(f"Camera reader thread started (device={device_id})")
     try:
         while not _camera_stop_event.is_set():
             ret, frame = cap.read()
@@ -735,8 +761,8 @@ def start_smart():
 
     # 释放 Web 摄像头，让 main.py 的 CameraBroadcaster 独占设备。
     stop_web_camera()
-    log_to_buffer("Web 摄像头已释放")
-    time.sleep(0.5)
+    log_to_buffer("Web 摄像头已释放，等待设备完全释放...")
+    time.sleep(2.0)
 
     main_py = os.path.join(PROJECT_DIR, "main.py")
     master_fd, slave_fd = pty.openpty()
