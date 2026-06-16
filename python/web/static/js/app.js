@@ -269,6 +269,29 @@ function motorCmd(direction) {
     socket?.emit("command", { action: "motor", direction, speed: currentSpeed });
 }
 
+function manualWheelsForDirection(direction) {
+    const speed = Number.parseInt(currentSpeed, 10);
+    const turnBoost = 5;
+    if (direction === "forward") return { rr: -speed, fr: -speed, fl: speed, rl: speed };
+    if (direction === "backward") return { rr: speed, fr: speed, fl: -speed, rl: -speed };
+    if (direction === "left") {
+        const rightSpeed = speed + turnBoost;
+        return { rr: -rightSpeed, fr: -rightSpeed, fl: speed, rl: speed };
+    }
+    if (direction === "right") {
+        const leftSpeed = speed + turnBoost;
+        return { rr: -speed, fr: -speed, fl: leftSpeed, rl: leftSpeed };
+    }
+    return { rr: 0, fr: 0, fl: 0, rl: 0 };
+}
+
+function motorRawCmd(direction) {
+    socket?.emit("command", {
+        action: "motor_raw",
+        wheels: manualWheelsForDirection(direction),
+    });
+}
+
 function bindDriveControls() {
     document.querySelectorAll(".dpad-btn").forEach((button) => {
         const direction = button.dataset.direction;
@@ -747,14 +770,29 @@ function bindKeyboardControls() {
     };
     const activeKeys = new Set();
 
-    const activeDirection = () => {
-        const directions = new Set([...activeKeys].map((key) => keyMap[key]).filter(Boolean));
-        if (directions.has("stop")) return "stop";
-        if (directions.has("right")) return "right";
-        if (directions.has("left")) return "left";
-        if (directions.has("backward")) return "backward";
-        if (directions.has("forward")) return "forward";
-        return "stop";
+    const activeDirections = () => {
+        return new Set([...activeKeys].map((key) => keyMap[key]).filter(Boolean));
+    };
+
+    const sendKeyboardCommand = () => {
+        const directions = activeDirections();
+        if (directions.has("stop")) {
+            motorCmd("stop");
+        } else if (directions.has("forward") && directions.has("right")) {
+            motorRawCmd("right");
+        } else if (directions.has("forward") && directions.has("left")) {
+            motorRawCmd("left");
+        } else if (directions.has("right")) {
+            motorCmd("right");
+        } else if (directions.has("left")) {
+            motorCmd("left");
+        } else if (directions.has("backward")) {
+            motorCmd("backward");
+        } else if (directions.has("forward")) {
+            motorCmd("forward");
+        } else {
+            motorCmd("stop");
+        }
     };
 
     document.addEventListener("keydown", (event) => {
@@ -763,14 +801,14 @@ function bindKeyboardControls() {
         event.preventDefault();
         if (!activeKeys.has(event.key)) {
             activeKeys.add(event.key);
-            motorCmd(activeDirection());
+            sendKeyboardCommand();
         }
     });
 
     document.addEventListener("keyup", (event) => {
         if (!keyMap[event.key]) return;
         activeKeys.delete(event.key);
-        motorCmd(activeDirection());
+        sendKeyboardCommand();
     });
 
     window.addEventListener("blur", () => {

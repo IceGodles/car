@@ -316,19 +316,16 @@ def direction_to_wheels(direction, speed):
     前进: [-s, -s, +s, +s] (右轮负=正转, 左轮正=正转)
     """
     speed = int(speed)
-    turn_boost = 5
     if direction == "forward":
         return (-speed, -speed, speed, speed)
     elif direction == "backward":
         return (speed, speed, -speed, -speed)
     elif direction == "left":
-        # Left command keeps moving forward, with right wheels boosted.
-        right_speed = speed + turn_boost
-        return (-right_speed, -right_speed, speed, speed)
+        spin_speed = 60
+        return (spin_speed, spin_speed, spin_speed, spin_speed)
     elif direction == "right":
-        # Right command keeps moving forward, with left wheels boosted.
-        left_speed = speed + turn_boost
-        return (-speed, -speed, left_speed, left_speed)
+        spin_speed = 60
+        return (-spin_speed, -spin_speed, -spin_speed, -spin_speed)
     return (0, 0, 0, 0)
 
 def apply_wheels(rr, fr, fl, rl):
