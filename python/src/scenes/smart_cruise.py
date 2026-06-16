@@ -63,6 +63,7 @@ class SmartCruise(BaseScene):
         self._boundary_stop_time = 0
         self._pending_boundary_sign = None
         self._boundary_hold_speeds = (0, 0, 0, 0)
+        self._boundary_hold_seconds = 0.05
         self._post_stop_cruise = False
         self._post_stop_start_time = 0
         self._post_stop_sign = None
@@ -801,10 +802,10 @@ class SmartCruise(BaseScene):
                         self._boundary_warning_start_time = time.time()
                     self._boundary_warning_mode = True
 
-                # 到达停止线后保持速度0.1s，再停车触发转弯
+                # 到达停止线后短暂保持速度，再停车触发转弯
                 if self._boundary_stop_time > 0:
-                    if time.time() - self._boundary_stop_time >= 0.1:
-                        # 0.1s到，停车并触发转弯
+                    if time.time() - self._boundary_stop_time >= self._boundary_hold_seconds:
+                        # 保持时间到，停车并触发转弯
                         self._stop_for_boundary()
                         self._save_boundary_warning_debug(
                             img_bgr, debug_dir, frame_count,
@@ -828,7 +829,7 @@ class SmartCruise(BaseScene):
                         last_cmd_time = time.time()
                         continue
                     else:
-                        # 0.1s内保持停止前的速度继续运动
+                        # 保持时间内维持停止前的速度继续运动
                         self.ctrl.send_raw_wheels(*self._boundary_hold_speeds)
                         frame_count += 1
                         last_cmd_time = time.time()
@@ -847,7 +848,7 @@ class SmartCruise(BaseScene):
                         state_output, lane_result, h_f, w_f)
                     warning_speeds = (rr, fr, fl, rl)
                     if boundary_stop:
-                        # 不停车，保持当前APPROACH/巡线修正速度0.1s
+                        # 不停车，保持当前APPROACH/巡线修正速度一小段时间
                         self._boundary_hold_speeds = warning_speeds
                         self._save_boundary_warning_debug(
                             img_bgr, debug_dir, frame_count,
@@ -857,10 +858,13 @@ class SmartCruise(BaseScene):
                         )
                         self._boundary_warning_mode = False
                         self._boundary_warning_start_time = 0
-                        # 记录时间，0.1s内保持速度，到期后停车触发转弯
+                        # 记录时间，保持速度到期后停车触发转弯
                         self._boundary_stop_time = time.time()
                         self._pending_boundary_sign = state_output.get("pending_sign")
-                        log.info("Boundary reached: hold speed 0.1s before stop+turn")
+                        log.info(
+                            "Boundary reached: hold speed %.2fs before stop+turn",
+                            self._boundary_hold_seconds,
+                        )
                     else:
                         self.ctrl.send_raw_wheels(*warning_speeds)
                         self._save_boundary_warning_debug(
