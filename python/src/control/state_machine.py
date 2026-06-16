@@ -64,11 +64,14 @@ class DrivingStateMachine:
                     reason=f"detect:{sign_type}",
                 )
 
-    def on_boundary_detected(self):
+    def on_boundary_detected(self, immediate_turn=False):
         """检测到黄线边界 → 立即停止approach"""
         self._boundary_hit = True
         if self.state == DrivingState.APPROACH:
-            self._enter_state(DrivingState.PAUSE, reason="boundary_hit")
+            if immediate_turn:
+                self._enter_state(DrivingState.TURN, reason="boundary_hold_done")
+            else:
+                self._enter_state(DrivingState.PAUSE, reason="boundary_hit")
         elif self.state == DrivingState.CRUISE:
             self._enter_state(DrivingState.TURN, reason="boundary_in_cruise")
 

@@ -790,6 +790,8 @@ class SmartCruise(BaseScene):
                 warning_allowed = (
                     state_snapshot.get("state") not in ("TURN", "PAUSE", "STOP")
                     and self._boundary_stop_time == 0  # STOP后延迟期间禁止重新进入WARNING
+                    and not self._post_turn_align
+                    and not self._boundary_escape
                 )
                 if not warning_allowed:
                     self._boundary_warning_mode = False
@@ -812,15 +814,19 @@ class SmartCruise(BaseScene):
                             wheel_speeds=(0, 0, 0, 0),
                         )
                         pending_sign = self._pending_boundary_sign
+                        self._pending_boundary_sign = None
                         self._boundary_stop_time = 0
                         if pending_sign in ("left", "right", "turnaround"):
-                            self.sm.on_boundary_detected()
+                            self.sm.on_boundary_detected(immediate_turn=True)
                             log.info("Delayed turn trigger: sign=%s", pending_sign)
                         else:
                             self._start_boundary_escape({
                                 "coverage": 0.3, "y_ratio": 0.3, "hit": True,
                             })
                             log.info("Delayed boundary escape (no sign)")
+                        frame_count += 1
+                        last_cmd_time = time.time()
+                        continue
                     else:
                         # 0.1s内保持停止前的速度继续运动
                         self.ctrl.send_raw_wheels(*self._boundary_hold_speeds)
